@@ -401,44 +401,29 @@
       background: rgba(255, 255, 255, 0.02);
     }
 
-    .card-overlay {
-      position: absolute;
-      inset: 0;
-      background: rgba(9, 6, 21, 0.7);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      opacity: 0;
-      transition: var(--transition);
-      z-index: 5;
-    }
-
-    .card:hover .card-overlay {
-      opacity: 1;
-    }
-
-    .quick-rec-btn {
-      background: var(--gold);
-      color: var(--bg);
-      border: none;
+    .card-quick-btn {
+      background: transparent;
+      border: 1px solid var(--gold);
+      color: var(--gold);
       font-family: inherit;
-      font-size: 0.8rem;
-      font-weight: 700;
-      padding: 0.6rem 1.2rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.25rem 0.6rem;
       border-radius: 100px;
       cursor: pointer;
-      box-shadow: 0 4px 15px var(--gold-glow);
       transition: var(--transition);
-      transform: translateY(10px);
+      z-index: 10;
     }
 
-    .card:hover .quick-rec-btn {
-      transform: translateY(0);
+    .card-quick-btn:hover {
+      background: var(--gold);
+      color: var(--bg);
+      box-shadow: 0 0 10px var(--gold-glow);
     }
 
-    .quick-rec-btn:hover {
-      background: #e9ca79;
-      box-shadow: 0 6px 20px rgba(201, 168, 76, 0.6);
+    .card.selected .card-quick-btn {
+      background: var(--gold);
+      color: var(--bg);
     }
 
     .poster-img {
@@ -786,10 +771,23 @@
       }
     }
 
+    function escapeXml(unsafe) {
+      return unsafe.replace(/[<>&'"]/g, function (c) {
+        switch (c) {
+          case '<': return '&lt;';
+          case '>': return '&gt;';
+          case '&': return '&amp;';
+          case '\'': return '&apos;';
+          case '"': return '&quot;';
+        }
+      });
+    }
+
     function getSvgPlaceholder(title) {
+      const escapedTitle = escapeXml(title);
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450">
         <rect width="300" height="450" fill="#1a1a2e"/>
-        <text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#c9a84c" font-weight="bold">${title}</text>
+        <text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#c9a84c" font-weight="bold">${escapedTitle}</text>
         <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#555">NO POSTER AVAILABLE</text>
       </svg>`;
       return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
@@ -1001,15 +999,12 @@
         card.innerHTML = `
           <div class="poster-wrap">
             <img class="poster-img" src="${posterUrl}" alt="${m.title}" loading="lazy" />
-            <div class="card-overlay">
-              <button class="quick-rec-btn" id="btn_rec_${m.id}">Find Similar</button>
-            </div>
           </div>
           <div class="card-info">
-            <div class="card-title">${m.title}</div>
+            <div class="card-title" title="${m.title}">${m.title}</div>
             <div class="card-meta">
-              <span>${m.year || 'N/A'}</span>
-              <span class="card-rating">IMDb</span>
+              <span>${m.year || 'N/A'} • IMDb</span>
+              <button class="card-quick-btn" id="btn_rec_${m.id}">Find Similar</button>
             </div>
           </div>
         `;
@@ -1170,15 +1165,12 @@
         card.innerHTML = `
           <div class="poster-wrap">
             <img class="poster-img" src="${posterSrc}" alt="${m.title}" id="img_${m.id}" loading="lazy" />
-            <div class="card-overlay">
-              <button class="quick-rec-btn" id="btn_rec_${m.id}">Find Similar</button>
-            </div>
           </div>
           <div class="card-info">
-            <div class="card-title">${m.title}</div>
+            <div class="card-title" title="${m.title}">${m.title}</div>
             <div class="card-meta">
-              <span>${m.year}</span>
-              <span class="card-rating">★ ${m.rating}</span>
+              <span>${m.year} • ★ ${m.rating}</span>
+              <button class="card-quick-btn" id="btn_rec_${m.id}">Find Similar</button>
             </div>
           </div>
         `;
