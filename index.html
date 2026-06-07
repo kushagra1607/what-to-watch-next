@@ -406,10 +406,12 @@
       height: 100%;
       object-fit: cover;
       transition: var(--transition);
+      opacity: 0.8;
     }
 
     .card:hover .poster-img {
       transform: scale(1.06);
+      opacity: 1;
     }
 
     .card-info {
@@ -541,6 +543,7 @@
       border-radius: var(--radius-md);
       box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
       flex-shrink: 0;
+      opacity: 0.85;
     }
 
     .rec-info {
@@ -640,7 +643,7 @@
 
   <div class="header">
     <h1>What To Watch <span>Next</span></h1>
-    <p>Select 2–5 movies you love, and our smart content-based recommendation engine will predict your next favorite.</p>
+    <p>Select 2–5 movies you love from the TMDB 5,000+ database, and our smart hybrid engine will recommend what to watch next.</p>
   </div>
 
   <div class="container">
@@ -649,7 +652,7 @@
     <div class="controls-panel">
       <!-- Tab Switcher -->
       <div class="search-tabs">
-        <button class="tab-btn active" id="tabLocal" onclick="switchTab('local')">Search Library</button>
+        <button class="tab-btn active" id="tabLocal" onclick="switchTab('local')">Search Library (5,000+ Movies)</button>
         <button class="tab-btn" id="tabGlobal" onclick="switchTab('global')">Search Online (IMDb)</button>
       </div>
 
@@ -657,7 +660,7 @@
         <div>
           <div class="search-box">
             <div class="search-input-wrapper">
-              <input type="text" class="search-input" id="searchInput" placeholder="Search movies in the library..." />
+              <input type="text" class="search-input" id="searchInput" placeholder="Search 5,000+ movies..." />
               <span class="search-icon">🔍</span>
             </div>
             <button class="search-btn" id="searchBtn" style="display:none" onclick="triggerGlobalSearch()">Search IMDb</button>
@@ -704,7 +707,7 @@
   </div>
 
   <div class="footer">
-    Built with passion by Kushagra Kartikey Suman • Cosine Similarity Vector Model
+    Built with passion by Kushagra Kartikey Suman • Hybrid Cosine Similarity Engine
   </div>
 
   <script>
@@ -716,18 +719,58 @@
     let searchMode = "local"; // "local" or "global"
     let globalSearchResults = [];
 
+    // LocalStorage Poster Cache (Prevents hammering the IMDb API and speeds up loads)
+    const posterCache = JSON.parse(localStorage.getItem('movie_posters_cache') || '{}');
+
     const ALL_GENRES = ["Action","Adventure","Animation","Comedy","Crime","Drama","Horror","Music","Mystery","Romance","Sci-Fi","Thriller","Western"];
 
-    // Initialize & Fetch local posters database
+    // Input Debouncing to prevent heavy updates while typing
+    function debounce(func, delay) {
+      let timeout;
+      return function (...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), delay);
+      };
+    }
+
+    // Initialize & Fetch 5000 movies JSON database
     async function init() {
       try {
-        const res = await fetch('./movies_with_posters.json');
+        const res = await fetch('./movies_5000.json');
         MOVIES = await res.json();
         renderGenres();
         render();
       } catch (err) {
         console.error("Error loading movie database:", err);
       }
+    }
+
+    // Keyless IMDb suggest API / fallback placeholder
+    async function getPosterUrl(title) {
+      if (posterCache[title]) return posterCache[title];
+      try {
+        // Query keyless search API
+        const res = await fetch(`https://imdb.iamidiotareyoutoo.com/search?q=${encodeURIComponent(title)}`);
+        const data = await res.json();
+        if (data.ok && data.description && data.description[0]) {
+          const poster = data.description[0]['#IMG_POSTER'];
+          if (poster) {
+            posterCache[title] = poster;
+            localStorage.setItem('movie_posters_cache', JSON.stringify(posterCache));
+            return poster;
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching poster for:", title, err);
+      }
+      // Return clean CSS-based SVG placeholder if fetch fails or poster not found
+      return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450"><rect width="300" height="450" fill="%231a1a2e"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%23c9a84c" font-weight="bold">${encodeURIComponent(title)}</text></svg>`;
+    }
+
+    // Async poster loader for cards
+    async function loadCardPoster(imgElement, title) {
+      const url = await getPosterUrl(title);
+      imgElement.src = url;
     }
 
     // Switch Search Modes
@@ -742,7 +785,7 @@
       const gridTitle = document.getElementById('gridTitle');
 
       if (mode === 'local') {
-        input.placeholder = "Search movies in the library...";
+        input.placeholder = "Search 5,000+ movies...";
         searchBtn.style.display = "none";
         genreFilters.style.display = "flex";
         gridTitle.textContent = "Explore Library";
@@ -779,12 +822,13 @@
       }
     };
 
-    document.getElementById('searchInput').oninput = (e) => {
+    // Debounced search typing to prevent lag
+    document.getElementById('searchInput').oninput = debounce((e) => {
       searchQuery = e.target.value.toLowerCase().trim();
       if (searchMode === 'local') {
         render();
       }
-    };
+    }, 250);
 
     // Trigger IMDb API search
     async function triggerGlobalSearch() {
@@ -964,26 +1008,31 @@
       grid.innerHTML = '';
 
       const filtered = MOVIES.filter(m => {
-        const matchesSearch = m.title.toLowerCase().includes(searchQuery);
+        const matchesSearch = !searchQuery || m.title.toLowerCase().includes(searchQuery);
         const matchesGenre = !activeGenre || m.genre.includes(activeGenre);
         return matchesSearch && matchesGenre;
       });
 
-      if (filtered.length === 0) {
+      // Show top 60 cards initially when not searching to prevent DOM loading lag
+      const limit = searchQuery ? filtered.length : 60;
+      const displayList = filtered.slice(0, limit);
+
+      if (displayList.length === 0) {
         grid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 4rem 0;">No movies found matching your criteria.</div>`;
         return;
       }
 
-      filtered.forEach(m => {
+      displayList.forEach(m => {
         const card = document.createElement('div');
         const isSel = selected.has(m.id);
         card.className = `card ${isSel ? 'selected' : ''}`;
         
-        const posterUrl = m.poster || `https://placehold.co/300x450/1a1a2e/c9a84c?text=${encodeURIComponent(m.title)}`;
+        // Base placeholder SVG loaded instantly
+        const basePlaceholder = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450"><rect width="300" height="450" fill="%231a1a2e"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%23555" font-weight="bold">LOADING POSTER</text></svg>`;
 
         card.innerHTML = `
           <div class="poster-wrap">
-            <img class="poster-img" src="${posterUrl}" alt="${m.title}" loading="lazy" />
+            <img class="poster-img" src="${basePlaceholder}" alt="${m.title}" id="img_${m.id}" loading="lazy" />
           </div>
           <div class="card-info">
             <div class="card-title">${m.title}</div>
@@ -1007,6 +1056,10 @@
           updateUI();
         };
         grid.appendChild(card);
+
+        // Asynchronously load actual poster url
+        const img = card.querySelector(`#img_${m.id}`);
+        loadCardPoster(img, m.title);
       });
     }
 
@@ -1040,7 +1093,7 @@
         allSelected.forEach(m => {
           const img = document.createElement('img');
           img.className = 'thumb-item';
-          img.src = m.poster || `https://placehold.co/50x75/1a1a2e/c9a84c?text=${encodeURIComponent(m.title)}`;
+          img.src = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="50" height="75" viewBox="0 0 50 75"><rect width="50" height="75" fill="%231a1a2e"/></svg>`;
           img.title = `Remove ${m.title}`;
           img.onclick = () => {
             selected.delete(m.id);
@@ -1048,6 +1101,9 @@
             updateUI();
           };
           thumbs.appendChild(img);
+
+          // Asynchronously load thumbnail image
+          loadCardPoster(img, m.title);
         });
       } else {
         bar.classList.remove('show');
@@ -1067,7 +1123,7 @@
         <h2>Recommendations for <span>You</span></h2>
         ${recs.map((m, i) => `
           <div class="rec-card">
-            <img class="rec-poster" src="${m.poster || 'https://placehold.co/120x180'}" alt="${m.title}" />
+            <img class="rec-poster" id="rec_img_${m.id}" src="data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="180" viewBox="0 0 120 180"><rect width="120" height="180" fill="%231a1a2e"/></svg>" alt="${m.title}" />
             <div class="rec-info">
               <div class="rec-rank">#${i + 1} Best Match</div>
               <div class="rec-title">${m.title} (${m.year})</div>
@@ -1085,6 +1141,12 @@
       `;
       div.classList.add('show');
       div.scrollIntoView({ behavior: 'smooth' });
+
+      // Asynchronously load recommendation posters
+      recs.forEach(m => {
+        const img = document.getElementById(`rec_img_${m.id}`);
+        if (img) loadCardPoster(img, m.title);
+      });
     };
 
     document.getElementById('recBtn').onclick = runRec;
