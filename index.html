@@ -736,6 +736,7 @@
     // Initialize & Fetch 5000 movies JSON database
     async function init() {
       try {
+        initPosterObserver();
         const res = await fetch('./movies_5000.json');
         MOVIES = await res.json();
         renderGenres();
@@ -765,6 +766,35 @@
       }
       // Return clean CSS-based SVG placeholder if fetch fails or poster not found
       return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450"><rect width="300" height="450" fill="%231a1a2e"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%23c9a84c" font-weight="bold">${encodeURIComponent(title)}</text></svg>`;
+    }
+
+    // Intersection Observer for lazy loading posters that aren't pre-populated
+    let posterObserver;
+    function initPosterObserver() {
+      if ('IntersectionObserver' in window) {
+        posterObserver = new IntersectionObserver((entries, observer) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              const img = entry.target;
+              const title = img.getAttribute('data-src');
+              if (title) {
+                loadCardPoster(img, title);
+              }
+              observer.unobserve(img);
+            }
+          });
+        }, {
+          rootMargin: "200px 0px" // Load slightly before they scroll into view
+        });
+      }
+    }
+
+    function lazyLoadImg(img, title) {
+      if (posterObserver) {
+        posterObserver.observe(img);
+      } else {
+        loadCardPoster(img, title);
+      }
     }
 
     // Async poster loader for cards
@@ -1027,12 +1057,14 @@
         const isSel = selected.has(m.id);
         card.className = `card ${isSel ? 'selected' : ''}`;
         
-        // Base placeholder SVG loaded instantly
+        // Base placeholder SVG loaded instantly if no poster path is available
         const basePlaceholder = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450"><rect width="300" height="450" fill="%231a1a2e"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%23555" font-weight="bold">LOADING POSTER</text></svg>`;
+
+        const posterSrc = m.poster || basePlaceholder;
 
         card.innerHTML = `
           <div class="poster-wrap">
-            <img class="poster-img" src="${basePlaceholder}" alt="${m.title}" id="img_${m.id}" loading="lazy" />
+            <img class="poster-img" src="${posterSrc}" alt="${m.title}" id="img_${m.id}" loading="lazy" />
           </div>
           <div class="card-info">
             <div class="card-title">${m.title}</div>
@@ -1057,9 +1089,12 @@
         };
         grid.appendChild(card);
 
-        // Asynchronously load actual poster url
-        const img = card.querySelector(`#img_${m.id}`);
-        loadCardPoster(img, m.title);
+        // If poster is not pre-populated, load it lazily
+        if (!m.poster) {
+          const img = card.querySelector(`#img_${m.id}`);
+          img.setAttribute('data-src', m.title);
+          lazyLoadImg(img, m.title);
+        }
       });
     }
 
@@ -1093,7 +1128,8 @@
         allSelected.forEach(m => {
           const img = document.createElement('img');
           img.className = 'thumb-item';
-          img.src = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="50" height="75" viewBox="0 0 50 75"><rect width="50" height="75" fill="%231a1a2e"/></svg>`;
+          const basePlaceholder = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="50" height="75" viewBox="0 0 50 75"><rect width="50" height="75" fill="%231a1a2e"/></svg>`;
+          img.src = m.poster || basePlaceholder;
           img.title = `Remove ${m.title}`;
           img.onclick = () => {
             selected.delete(m.id);
@@ -1102,8 +1138,10 @@
           };
           thumbs.appendChild(img);
 
-          // Asynchronously load thumbnail image
-          loadCardPoster(img, m.title);
+          // Asynchronously load thumbnail image if not pre-populated
+          if (!m.poster) {
+            loadCardPoster(img, m.title);
+          }
         });
       } else {
         bar.classList.remove('show');
@@ -1121,31 +1159,37 @@
       
       div.innerHTML = `
         <h2>Recommendations for <span>You</span></h2>
-        ${recs.map((m, i) => `
-          <div class="rec-card">
-            <img class="rec-poster" id="rec_img_${m.id}" src="data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="180" viewBox="0 0 120 180"><rect width="120" height="180" fill="%231a1a2e"/></svg>" alt="${m.title}" />
-            <div class="rec-info">
-              <div class="rec-rank">#${i + 1} Best Match</div>
-              <div class="rec-title">${m.title} (${m.year})</div>
-              <div class="rec-genres">
-                ${m.genre.map(g => `<span class="rec-genre-pill">${g}</span>`).join('')}
+        ${recs.map((m, i) => {
+          const basePlaceholder = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="180" viewBox="0 0 120 180"><rect width="120" height="180" fill="%231a1a2e"/></svg>`;
+          const posterSrc = m.poster || basePlaceholder;
+          return `
+            <div class="rec-card">
+              <img class="rec-poster" id="rec_img_${m.id}" src="${posterSrc}" alt="${m.title}" />
+              <div class="rec-info">
+                <div class="rec-rank">#${i + 1} Best Match</div>
+                <div class="rec-title">${m.title} (${m.year})</div>
+                <div class="rec-genres">
+                  ${m.genre.map(g => `<span class="rec-genre-pill">${g}</span>`).join('')}
+                </div>
+                <div class="rec-overview">${m.overview}</div>
               </div>
-              <div class="rec-overview">${m.overview}</div>
+              <div class="rec-match">
+                <span class="rec-match-num">${Math.round(m.score * 100)}%</span>
+                <span class="rec-match-label">Match Score</span>
+              </div>
             </div>
-            <div class="rec-match">
-              <span class="rec-match-num">${Math.round(m.score * 100)}%</span>
-              <span class="rec-match-label">Match Score</span>
-            </div>
-          </div>
-        `).join('')}
+          `;
+        }).join('')}
       `;
       div.classList.add('show');
       div.scrollIntoView({ behavior: 'smooth' });
 
-      // Asynchronously load recommendation posters
+      // Asynchronously load recommendation posters if not pre-populated
       recs.forEach(m => {
-        const img = document.getElementById(`rec_img_${m.id}`);
-        if (img) loadCardPoster(img, m.title);
+        if (!m.poster) {
+          const img = document.getElementById(`rec_img_${m.id}`);
+          if (img) loadCardPoster(img, m.title);
+        }
       });
     };
 
