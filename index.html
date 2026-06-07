@@ -401,6 +401,46 @@
       background: rgba(255, 255, 255, 0.02);
     }
 
+    .card-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(9, 6, 21, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: var(--transition);
+      z-index: 5;
+    }
+
+    .card:hover .card-overlay {
+      opacity: 1;
+    }
+
+    .quick-rec-btn {
+      background: var(--gold);
+      color: var(--bg);
+      border: none;
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 700;
+      padding: 0.6rem 1.2rem;
+      border-radius: 100px;
+      cursor: pointer;
+      box-shadow: 0 4px 15px var(--gold-glow);
+      transition: var(--transition);
+      transform: translateY(10px);
+    }
+
+    .card:hover .quick-rec-btn {
+      transform: translateY(0);
+    }
+
+    .quick-rec-btn:hover {
+      background: #e9ca79;
+      box-shadow: 0 6px 20px rgba(201, 168, 76, 0.6);
+    }
+
     .poster-img {
       width: 100%;
       height: 100%;
@@ -746,11 +786,54 @@
       }
     }
 
-    // Keyless IMDb suggest API / fallback placeholder
-    async function getPosterUrl(title) {
-      if (posterCache[title]) return posterCache[title];
+    function getSvgPlaceholder(title) {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450">
+        <rect width="300" height="450" fill="#1a1a2e"/>
+        <text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#c9a84c" font-weight="bold">${title}</text>
+        <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#555">NO POSTER AVAILABLE</text>
+      </svg>`;
+      return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+    }
+
+    function getLoadingPlaceholder() {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450">
+        <rect width="300" height="450" fill="#120c24"/>
+        <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#5c5770" font-weight="bold">LOADING POSTER</text>
+      </svg>`;
+      return `data:image/svg+xml;base64,${btoa(svg)}`;
+    }
+
+    const requestQueue = [];
+    let activeRequests = 0;
+    const MAX_CONCURRENT_REQUESTS = 3;
+    const REQUEST_DELAY = 100;
+
+    function queuePosterRequest(title, resolve, reject) {
+      requestQueue.push({ title, resolve, reject });
+      processQueue();
+    }
+
+    function processQueue() {
+      if (activeRequests >= MAX_CONCURRENT_REQUESTS || requestQueue.length === 0) return;
+
+      const { title, resolve, reject } = requestQueue.shift();
+      activeRequests++;
+
+      fetchPoster(title)
+        .then(url => {
+          resolve(url);
+        })
+        .catch(err => {
+          resolve(getSvgPlaceholder(title));
+        })
+        .finally(() => {
+          activeRequests--;
+          setTimeout(processQueue, REQUEST_DELAY);
+        });
+    }
+
+    async function fetchPoster(title) {
       try {
-        // Query keyless search API
         const res = await fetch(`https://imdb.iamidiotareyoutoo.com/search?q=${encodeURIComponent(title)}`);
         const data = await res.json();
         if (data.ok && data.description && data.description[0]) {
@@ -764,8 +847,15 @@
       } catch (err) {
         console.error("Error fetching poster for:", title, err);
       }
-      // Return clean CSS-based SVG placeholder if fetch fails or poster not found
-      return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450"><rect width="300" height="450" fill="%231a1a2e"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="14" fill="%23c9a84c" font-weight="bold">${encodeURIComponent(title)}</text></svg>`;
+      return getSvgPlaceholder(title);
+    }
+
+    // Keyless IMDb suggest API / fallback placeholder
+    function getPosterUrl(title) {
+      if (posterCache[title]) return Promise.resolve(posterCache[title]);
+      return new Promise((resolve, reject) => {
+        queuePosterRequest(title, resolve, reject);
+      });
     }
 
     // Intersection Observer for lazy loading posters that aren't pre-populated
@@ -911,6 +1001,9 @@
         card.innerHTML = `
           <div class="poster-wrap">
             <img class="poster-img" src="${posterUrl}" alt="${m.title}" loading="lazy" />
+            <div class="card-overlay">
+              <button class="quick-rec-btn" id="btn_rec_${m.id}">Find Similar</button>
+            </div>
           </div>
           <div class="card-info">
             <div class="card-title">${m.title}</div>
@@ -935,6 +1028,18 @@
           }
           updateUI();
         };
+
+        const quickRecBtn = card.querySelector(`#btn_rec_${m.id}`);
+        quickRecBtn.onclick = (e) => {
+          e.stopPropagation();
+          selected.clear();
+          customMovies.clear();
+          selected.add(m.id);
+          customMovies.set(m.id, m);
+          updateUI();
+          runRec();
+        };
+
         grid.appendChild(card);
       });
     }
@@ -998,7 +1103,7 @@
     function recommend() {
       // Merge local library movies and selected custom ones
       const picks = MOVIES.concat(Array.from(customMovies.values())).filter(m => selected.has(m.id));
-      if (picks.length < 2) return [];
+      if (picks.length < 1) return [];
       
       // 1. Average Genre Vector
       const avgVec = ALL_GENRES.map((_, i) => picks.reduce((s, m) => s + genreVec(m.genre)[i], 0) / picks.length);
@@ -1058,13 +1163,16 @@
         card.className = `card ${isSel ? 'selected' : ''}`;
         
         // Base placeholder SVG loaded instantly if no poster path is available
-        const basePlaceholder = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450"><rect width="300" height="450" fill="%231a1a2e"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12" fill="%23555" font-weight="bold">LOADING POSTER</text></svg>`;
+        const basePlaceholder = getLoadingPlaceholder();
 
         const posterSrc = m.poster || basePlaceholder;
 
         card.innerHTML = `
           <div class="poster-wrap">
             <img class="poster-img" src="${posterSrc}" alt="${m.title}" id="img_${m.id}" loading="lazy" />
+            <div class="card-overlay">
+              <button class="quick-rec-btn" id="btn_rec_${m.id}">Find Similar</button>
+            </div>
           </div>
           <div class="card-info">
             <div class="card-title">${m.title}</div>
@@ -1087,6 +1195,17 @@
           }
           updateUI();
         };
+
+        const quickRecBtn = card.querySelector(`#btn_rec_${m.id}`);
+        quickRecBtn.onclick = (e) => {
+          e.stopPropagation();
+          selected.clear();
+          customMovies.clear();
+          selected.add(m.id);
+          updateUI();
+          runRec();
+        };
+
         grid.appendChild(card);
 
         // If poster is not pre-populated, load it lazily
@@ -1110,7 +1229,7 @@
       countEl.textContent = selected.size;
 
       // Handle buttons disabled states
-      const canRec = selected.size >= 2;
+      const canRec = selected.size >= 1;
       document.getElementById('recBtn').disabled = !canRec;
       document.getElementById('floatingRecBtn').disabled = !canRec;
       document.getElementById('resetBtn').style.display = selected.size > 0 ? 'inline-block' : 'none';
@@ -1147,7 +1266,7 @@
         bar.classList.remove('show');
       }
 
-      if (selected.size < 2) {
+      if (selected.size < 1) {
         document.getElementById('results').classList.remove('show');
       }
     }
