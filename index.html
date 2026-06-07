@@ -110,8 +110,7 @@
       padding: 2rem;
       margin-bottom: 3rem;
       box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-      position: sticky;
-      top: 20px;
+      position: relative;
       z-index: 100;
     }
 
@@ -884,21 +883,74 @@
       return d === 0 ? 0 : dot(a, b) / d;
     }
 
+    // Stop words list for keyword extraction
+    const STOP_WORDS = new Set(["the", "a", "an", "and", "or", "but", "if", "then", "of", "to", "in", "on", "at", "for", "with", "by", "about", "against", "between", "into", "through", "during", "before", "after", "above", "below", "from", "up", "down", "in", "out", "on", "off", "over", "under", "again", "further", "once", "here", "there", "when", "where", "why", "how", "all", "any", "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "can", "will", "just", "should", "now", "is", "was", "were", "be", "been", "being", "have", "has", "had", "having", "do", "does", "did", "doing", "who", "whom", "this", "that", "these", "those", "am", "are", "his", "her", "him", "their", "them", "its", "he", "she", "it", "they", "we", "you", "i", "about", "also", "into", "their", "would", "could", "should", "more", "like", "one", "two", "three", "first", "second", "their", "our", "your", "my", "me", "us", "out", "about", "into", "over", "after", "before", "through", "while", "during", "without", "with", "under", "between", "against", "among", "along"]);
+
+    // Text tokenization & stop-words filtering
+    function getWords(text) {
+      if (!text) return [];
+      return text.toLowerCase()
+        .replace(/[^\w\s]/g, '')
+        .split(/\s+/)
+        .filter(word => word.length > 2 && !STOP_WORDS.has(word));
+    }
+
+    // Bag of Words Vector builder
+    function buildWordVec(words, vocab) {
+      const vec = {};
+      words.forEach(w => {
+        if (vocab.has(w)) vec[w] = (vec[w] || 0) + 1;
+      });
+      return vec;
+    }
+
+    // Cosine similarity for word vectors
+    function cosSimBoW(vecA, vecB) {
+      let dotProduct = 0;
+      let magA = 0;
+      let magB = 0;
+      for (const w in vecA) {
+        if (vecB[w]) dotProduct += vecA[w] * vecB[w];
+        magA += vecA[w] * vecA[w];
+      }
+      for (const w in vecB) {
+        magB += vecB[w] * vecB[w];
+      }
+      if (magA === 0 || magB === 0) return 0;
+      return dotProduct / (Math.sqrt(magA) * Math.sqrt(magB));
+    }
+
     // recommendation algorithm
     function recommend() {
       // Merge local library movies and selected custom ones
       const picks = MOVIES.concat(Array.from(customMovies.values())).filter(m => selected.has(m.id));
       if (picks.length < 2) return [];
       
+      // 1. Average Genre Vector
       const avgVec = ALL_GENRES.map((_, i) => picks.reduce((s, m) => s + genreVec(m.genre)[i], 0) / picks.length);
+      
+      // 2. Aggregate Description/Overview Keywords
+      const allSelectedWords = picks.flatMap(m => getWords(m.overview));
       const avgRating = picks.reduce((s, m) => s + m.rating, 0) / picks.length;
       
       // We only recommend movies from our high-quality local library database
       const candidates = MOVIES.filter(m => !selected.has(m.id));
       const scored = candidates.map(m => {
+        // Genre similarity (Macro-matching)
         const gSim = cosSim(avgVec, genreVec(m.genre));
+        
+        // Overview text keyword similarity (Micro-matching)
+        const mWords = getWords(m.overview);
+        const vocab = new Set([...allSelectedWords, ...mWords]);
+        const vecA = buildWordVec(allSelectedWords, vocab);
+        const vecB = buildWordVec(mWords, vocab);
+        const tSim = cosSimBoW(vecA, vecB);
+        
+        // Rating match (subtle bonus)
         const rSim = 1 - Math.abs(m.rating - avgRating) / 10;
-        const score = gSim * 0.75 + rSim * 0.25;
+        
+        // Hybrid Score: 50% Genre Vector + 40% Keyword Overview + 10% Rating similarity
+        const score = gSim * 0.5 + tSim * 0.4 + rSim * 0.1;
         return { ...m, score };
       });
       
